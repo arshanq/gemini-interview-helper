@@ -308,7 +308,7 @@ async function processScreenshots() {
     conversationHistory = [];
     const chat = model.startChat({ history: conversationHistory });
 
-    mainWindow.webContents.send('show-chat', { prompt, image: screenshots[0] });
+    mainWindow.webContents.send('show-chat', { prompt, images: screenshots });
 
     const result = await chat.sendMessage([prompt, ...imageParts]);
     const response = await result.response;
@@ -385,14 +385,25 @@ function resetProcess() {
   multiPageMode = false;
   conversationHistory = []; // Clear the conversation history
   mainWindow.webContents.send('clear-result');
-  updateInstruction("Ctrl+Shift+S: Screenshot | Ctrl+Shift+A: Multi-mode | Ctrl+Shift+W: Hide Window | Ctrl+Shift+Q: Close");
+  updateInstruction("Ctrl+Shift+S: Screenshot | Ctrl+Shift+A: Multi-mode | Ctrl+Shift+S to finalize");
   stage = 0;
 }
 
 function createHelperWindow() {
+  const { screen } = require('electron');
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth } = primaryDisplay.workAreaSize;
+
+  const helperWidth = 280;
+  const x = Math.floor((screenWidth / 2) - (helperWidth / 2));
+  const y = 50;
+
   helperWindow = new BrowserWindow({
-    width: 280,
+    width: helperWidth,
     height: 180,
+    x: x,
+    y: y,
+    opacity: 0.7, // Match main window transparency
     webPreferences: { 
       nodeIntegration: true,
       contextIsolation: false,
@@ -406,10 +417,8 @@ function createHelperWindow() {
     acceptFirstMouse: true,
     hasShadow: false,
     type: 'panel', // macOS-specific property to avoid capture
-    focusable: false, // Avoids capture by not being a focusable window
   });
 
-  helperWindow.setIgnoreMouseEvents(false); // Allow interaction despite not being focusable
   helperWindow.loadFile('helper.html');
   
   helperWindow.setContentProtection(true);
@@ -463,11 +472,8 @@ function createWindow() {
     simpleFullscreen: false, // Disable simple fullscreen
     enableLargerThanScreen: false, // Don't allow larger than screen
     opacity: 0.7, // Readable but subtle for stealth mode
-    type: 'panel', // macOS-specific property to avoid capture
-    focusable: false, // Avoids capture by not being a focusable window
+    type: 'panel',
   });
-
-  mainWindow.setIgnoreMouseEvents(false); // Allow interaction despite not being focusable
 
   // Ctrl+Shift+S => single or final screenshot
   globalShortcut.register('CommandOrControl+Shift+S', async () => {

@@ -12,6 +12,15 @@ A stealth coding interview assistance application that captures active windows a
 - **Hotkey Controls**: All functionality accessible via keyboard shortcuts
 - **Cross-Platform**: Works on macOS.
 
+## 💻 Screen Sharing Compatibility
+
+This application is designed to be invisible during screen sharing. It has been tested and works correctly with:
+
+*   ✅ Amazon Chime
+*   ✅ Google Meet
+
+**Note:** There is a known issue where the application windows may still be visible when using **Zoom** due to its aggressive screen capture methods.
+
 ## 🚀 Quick Start
 
 ### Prerequisites

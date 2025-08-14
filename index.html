@@ -253,15 +253,29 @@
       progressBar.style.display = 'none';
     }
 
-    const addMessage = (message, type, image) => {
+    const addMessage = (message, type, images) => {
       const messageElement = document.createElement('div');
       messageElement.classList.add('chat-message', type);
       messageElement.innerHTML = marked.parse(message);
-      if (image) {
-        const imageElement = document.createElement('img');
-        imageElement.src = `data:image/png;base64,${image}`;
-        messageElement.appendChild(imageElement);
+      
+      if (Array.isArray(images) && images.length > 0) {
+        const imageContainer = document.createElement('div');
+        imageContainer.style.display = 'flex';
+        imageContainer.style.flexWrap = 'wrap';
+        imageContainer.style.gap = '10px';
+        imageContainer.style.marginTop = '10px';
+        
+        images.forEach(imgData => {
+          const imageElement = document.createElement('img');
+          imageElement.src = `data:image/png;base64,${imgData}`;
+          imageElement.style.maxWidth = '45%';
+          imageElement.style.borderRadius = '4px';
+          imageElement.style.flex = '1 1 auto';
+          imageContainer.appendChild(imageElement);
+        });
+        messageElement.appendChild(imageContainer);
       }
+
       chatMessages.appendChild(messageElement);
     }
     
@@ -272,13 +286,12 @@
         updateBanner("Ctrl+Shift+R: Repeat process | Ctrl+Shift+W: Hide Window | Ctrl+Shift+W: Close");
       },
       'store-response': (event, result) => {
-        // Store the AI response in the overlay for persistence when hiding/showing
         const responseBox = document.getElementById('response-box');
         responseBox.innerHTML = marked.parse(result);
       },
-      'show-chat': (event, {prompt, image}) => {
+      'show-chat': (event, {prompt, images}) => {
         showChat();
-        addMessage(prompt, 'user-message', image);
+        addMessage(prompt, 'user-message', images);
         showProgressBar();
       },
       'show-help': (event, helpText) => {
@@ -307,13 +320,11 @@
       'hide-app': () => {
         updateBanner('', false);
         hideOverlay();
-        // Don't clear chat - preserve conversation history
       },
 
       'show-app': () => {
         updateBanner("Ctrl+Shift+R: Repeat process | Ctrl+Shift+W: Hide Window | Ctrl+Shift+Q: Close", true);
         showOverlay();
-        // Chat messages are preserved and will be visible when overlay shows
       },
       
       'clear-result': () => {
@@ -328,19 +339,12 @@
       ipcRenderer.on(channel, handler);
     });
     
-    // Handle window capture requests from main process
     ipcRenderer.on('capture-window', async (event, sourceId) => {
       try {
-        console.log('Renderer: Received capture request for source:', sourceId);
-        
-        // Check if getUserMedia is available
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
           throw new Error('getUserMedia not supported');
         }
         
-        console.log('Renderer: Attempting to get media stream...');
-        
-        // Get user media stream using the provided source ID
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -355,9 +359,6 @@
           }
         });
         
-        console.log('Renderer: Successfully got media stream:', stream);
-        
-        // Create video element to capture frame
         const video = document.createElement('video');
         video.srcObject = stream;
         video.style.display = 'none';
@@ -366,33 +367,18 @@
         video.onloadedmetadata = () => {
           video.play();
           
-          // Wait a bit for video to start
           setTimeout(() => {
             try {
-              // Create canvas and capture frame
               const canvas = document.createElement('canvas');
               canvas.width = video.videoWidth;
               canvas.height = video.videoHeight;
-              
               const ctx = canvas.getContext('2d');
               ctx.drawImage(video, 0, 0);
-              
-              // Stop the stream
               stream.getTracks().forEach(track => track.stop());
-              
-              // Remove video element
               document.body.removeChild(video);
-              
-              // Convert to base64
               const base64 = canvas.toDataURL('image/png').split(',')[1];
-              
-              console.log('Renderer: Successfully captured frame');
-              
-              // Send result back to main process
               ipcRenderer.send('capture-result', base64);
-              
             } catch (captureError) {
-              console.error('Renderer: Frame capture error:', captureError);
               stream.getTracks().forEach(track => track.stop());
               if (document.body.contains(video)) {
                 document.body.removeChild(video);
@@ -403,7 +389,6 @@
         };
         
         video.onerror = (error) => {
-          console.error('Renderer: Video error:', error);
           stream.getTracks().forEach(track => track.stop());
           if (document.body.contains(video)) {
             document.body.removeChild(video);
@@ -412,21 +397,10 @@
         };
         
       } catch (error) {
-        console.error('Renderer: Capture error:', error);
-        
-        // Provide more specific error messages based on the error type
         let errorMessage = error.message;
-        
-        if (error.name === 'NotAllowedError') {
-          errorMessage = 'Screen recording permission denied. Please grant screen recording permission to this app in System Preferences > Security & Privacy > Privacy > Screen Recording';
-        } else if (error.name === 'NotFoundError') {
-          errorMessage = 'No screen capture source found. The window may have been closed or minimized.';
-        } else if (error.name === 'NotSupportedError') {
-          errorMessage = 'Screen capture not supported on this system.';
-        } else if (error.message.includes('Could not start video source')) {
-          errorMessage = 'Could not start video source. This usually means screen recording permissions are not granted. Please check System Preferences > Security & Privacy > Privacy > Screen Recording and ensure this app is enabled.';
+        if (error.name === 'NotAllowedError' || error.message.includes('Could not start video source')) {
+          errorMessage = 'Screen recording permission denied. Please grant permission in System Preferences > Security & Privacy > Privacy > Screen Recording.';
         }
-        
         ipcRenderer.send('capture-error', errorMessage);
       }
     });
