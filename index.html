@@ -439,6 +439,61 @@
     });
     
     updateBanner("Ctrl+Shift+S: Screenshot | Ctrl+Shift+A: Multi-mode | Ctrl+Shift+W: Hide Window | Ctrl+Shift+Q: Close");
+
+    const recordButton = document.createElement('button');
+    recordButton.id = 'record-audio';
+    recordButton.textContent = 'Record Audio';
+    recordButton.style.position = 'fixed';
+    recordButton.style.bottom = '20px';
+    recordButton.style.right = '20px';
+    recordButton.style.padding = '10px 20px';
+    recordButton.style.border = 'none';
+    recordButton.style.borderRadius = '5px';
+    recordButton.style.backgroundColor = '#4CAF50';
+    recordButton.style.color = 'white';
+    recordButton.style.cursor = 'pointer';
+    document.body.appendChild(recordButton);
+
+    let mediaRecorder;
+    let audioChunks = [];
+    let isRecording = false;
+
+    recordButton.addEventListener('click', () => {
+      if (isRecording) {
+        mediaRecorder.stop();
+        recordButton.textContent = 'Record Audio';
+        recordButton.style.backgroundColor = '#4CAF50';
+        isRecording = false;
+      } else {
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(stream => {
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.start();
+            isRecording = true;
+            recordButton.textContent = 'Stop Recording';
+            recordButton.style.backgroundColor = '#f44336';
+            audioChunks = [];
+
+            mediaRecorder.addEventListener('dataavailable', event => {
+              audioChunks.push(event.data);
+            });
+
+            mediaRecorder.addEventListener('stop', () => {
+              const audioBlob = new Blob(audioChunks);
+              const reader = new FileReader();
+              reader.readAsDataURL(audioBlob);
+              reader.onloadend = () => {
+                const base64Audio = reader.result.split(',')[1];
+                ipcRenderer.send('audio-data', base64Audio);
+              };
+            });
+          })
+          .catch(error => {
+            console.error('Error accessing microphone:', error);
+            ipcRenderer.send('error', 'Could not access microphone. Please grant permission in your system settings.');
+          });
+      }
+    });
   </script>
 </body>
 </html>

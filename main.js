@@ -18,7 +18,7 @@ try {
   
   // Set default model if not specified
   if (!config.model) {
-    config.model = "gemini-2.5-flash";
+    config.model = "gemini-1.5-flash";
     console.log("Model not specified in config, using default:", config.model);
   }
 } catch (err) {
@@ -28,10 +28,12 @@ try {
 const genAI = new GoogleGenerativeAI(config.apiKey);
 
 let mainWindow;
+let helperWindow; // Window for the shortcuts helper
 let screenshots = [];
 let multiPageMode = false;
 let showWindow = true;
 let stage = 0; // 0 = boot up stage, 1 = multi capture, 2 = AI Answered
+let conversationHistory = []; // To store the conversation context
 
 // Define help message at the top level
 const helpMessage = `## 👋 Welcome to Gemini Interview Helper!
@@ -267,6 +269,8 @@ async function captureScreenshot() {
 
 function showMainWindow() {
   mainWindow.show();
+  if (helperWindow) helperWindow.show(); // Show helper window along with main
+
   if (stage == 2) {
     // If we're in stage 2 (AI has responded), restore the overlay with previous content
     mainWindow.webContents.send('show-app');
@@ -283,6 +287,7 @@ function showMainWindow() {
 function hideMainWindow() {
   mainWindow.webContents.send('hide-app');
   mainWindow.hide();
+  if (helperWindow) helperWindow.hide(); // Hide helper window along with main
   showWindow = false;
 }
 
@@ -299,11 +304,19 @@ async function processScreenshots() {
       }
     }));
 
+    // Start a new chat, clearing any previous history
+    conversationHistory = [];
+    const chat = model.startChat({ history: conversationHistory });
+
     mainWindow.webContents.send('show-chat', { prompt, image: screenshots[0] });
 
-    const result = await model.generateContent([prompt, ...imageParts]);
+    const result = await chat.sendMessage([prompt, ...imageParts]);
     const response = await result.response;
     const text = response.text();
+
+    // Save the initial exchange to our history
+    conversationHistory.push({ role: 'user', parts: [{ text: prompt }, ...imageParts] });
+    conversationHistory.push({ role: 'model', parts: [{ text }] });
 
     // Send the analysis result to both chat and response overlay
     mainWindow.webContents.send('analysis-result', text);
@@ -320,12 +333,93 @@ async function processScreenshots() {
   }
 }
 
+async function processAudio(base64Audio) {
+  try {
+    if (conversationHistory.length === 0) {
+      const errorMessage = "Please take a screenshot of a problem first before asking a follow-up question.";
+      console.error(errorMessage);
+      if (mainWindow.webContents) {
+        mainWindow.webContents.send('error', errorMessage);
+      }
+      return;
+    }
+
+    const model = genAI.getGenerativeModel({ model: config.model });
+    const chat = model.startChat({ history: conversationHistory });
+
+    const prompt = "Here is a follow-up question in audio format. Please answer based on our previous conversation:";
+    const audioPart = {
+      inlineData: {
+        data: base64Audio,
+        mimeType: 'audio/webm'
+      }
+    };
+
+    mainWindow.webContents.send('show-chat', { prompt: "Follow-up question (audio):" });
+
+    const result = await chat.sendMessage([prompt, audioPart]);
+    const response = await result.response;
+    const text = response.text();
+
+    // Add the follow-up exchange to our history
+    conversationHistory.push({ role: 'user', parts: [{ text: prompt }, audioPart] });
+    conversationHistory.push({ role: 'model', parts: [{ text }] });
+
+    // Send the analysis result to both chat and response overlay
+    mainWindow.webContents.send('analysis-result', text);
+    
+    // Also store it in the response overlay for when window is hidden/shown
+    mainWindow.webContents.send('store-response', text);
+    
+    stage = 2;
+  } catch (err) {
+    console.error("Error in processAudio:", err);
+    if (mainWindow.webContents) {
+      mainWindow.webContents.send('error', err.message);
+    }
+  }
+}
+
 function resetProcess() {
   screenshots = [];
   multiPageMode = false;
+  conversationHistory = []; // Clear the conversation history
   mainWindow.webContents.send('clear-result');
   updateInstruction("Ctrl+Shift+S: Screenshot | Ctrl+Shift+A: Multi-mode | Ctrl+Shift+W: Hide Window | Ctrl+Shift+Q: Close");
   stage = 0;
+}
+
+function createHelperWindow() {
+  helperWindow = new BrowserWindow({
+    width: 280,
+    height: 180,
+    webPreferences: { 
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: true,
+    skipTaskbar: true,
+    show: false, // Start hidden, show after main window is ready
+    acceptFirstMouse: true,
+    hasShadow: false,
+    type: 'panel', // macOS-specific property to avoid capture
+    focusable: false, // Avoids capture by not being a focusable window
+  });
+
+  helperWindow.setIgnoreMouseEvents(false); // Allow interaction despite not being focusable
+  helperWindow.loadFile('helper.html');
+  
+  helperWindow.setContentProtection(true);
+  helperWindow.setHiddenInMissionControl(true); // Hide from macOS Mission Control
+  helperWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  helperWindow.setAlwaysOnTop(true, 'screen-saver', 1);
+
+  helperWindow.on('closed', () => {
+    helperWindow = null;
+  });
 }
 
 function createWindow() {
@@ -368,8 +462,12 @@ function createWindow() {
     fullscreen: false, // Ensure not fullscreen
     simpleFullscreen: false, // Disable simple fullscreen
     enableLargerThanScreen: false, // Don't allow larger than screen
-    opacity: 0.7 // Readable but subtle for stealth mode
+    opacity: 0.7, // Readable but subtle for stealth mode
+    type: 'panel', // macOS-specific property to avoid capture
+    focusable: false, // Avoids capture by not being a focusable window
   });
+
+  mainWindow.setIgnoreMouseEvents(false); // Allow interaction despite not being focusable
 
   // Ctrl+Shift+S => single or final screenshot
   globalShortcut.register('CommandOrControl+Shift+S', async () => {
@@ -434,17 +532,25 @@ function createWindow() {
     app.quit();
   });
 
+  const { ipcMain } = require('electron');
+  ipcMain.on('audio-data', (event, base64Audio) => {
+    processAudio(base64Audio);
+  });
+
   mainWindow.loadFile('index.html');
   mainWindow.setContentProtection(true);
+  mainWindow.setHiddenInMissionControl(true); // Hide from macOS Mission Control
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   mainWindow.setAlwaysOnTop(true, 'screen-saver', 1);
 }
 
 app.whenReady().then(() => {
   createWindow();
+  createHelperWindow();
   // Show initial help message after window is created
   setTimeout(() => {
     mainWindow.webContents.send('show-help', helpMessage);
+    if (helperWindow) helperWindow.show(); // Show the helper window now
   }, 1000);
 });
 
@@ -458,5 +564,6 @@ app.on('window-all-closed', () => {
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
+    createHelperWindow();
   }
 });
